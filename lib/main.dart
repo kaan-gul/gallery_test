@@ -24,11 +24,11 @@ class ImageTestApp extends StatelessWidget {
   }
 }
 
-// --- VERİTABANI KATI (Senin projendeki _fixPath mantığıyla birebir aynı) ---
+// --- VERİTABANI KATI ---
 class TestImageModel {
   final int id;
-  final String dbSavedPath; // Veritabanına ilk kaydedilen eski yol
-  final String currentFixedPath; // Ekranda göstermek için güncellenen yol
+  final String dbSavedPath;
+  final String currentFixedPath;
 
   TestImageModel({
     required this.id,
@@ -76,7 +76,6 @@ class TestDBHelper {
 
     final appDir = await getApplicationDocumentsDirectory();
 
-    // Senin _fixPathAndCreateSoru mantığının birebir aynısı
     List<TestImageModel> list = [];
     for (var row in result) {
       final oldPath = row['originalPath'] as String;
@@ -122,7 +121,6 @@ class _TestHomePageState extends State<TestHomePage> {
     });
   }
 
-  // Resim Ekleme (Senin projendeki kopyalama mantığının birebir aynısı)
   Future<void> _pickAndSaveImage() async {
     final picker = ImagePicker();
     final XFile? pickedFile = await picker.pickImage(
@@ -132,31 +130,147 @@ class _TestHomePageState extends State<TestHomePage> {
 
     try {
       final appDir = await getApplicationDocumentsDirectory();
-      // Zaman damgalı eşsiz isim
       final fileName = 'test_soru_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final savedImagePath = p.join(appDir.path, fileName);
 
-      // Senin uyguladığın gibi direkt kopyalama
       final savedFile = await File(pickedFile.path).copy(savedImagePath);
 
-      // Orijinal yolu veritabanına kaydet
       await TestDBHelper.instance.insertImagePath(savedFile.path);
 
-      // Listeyi yenile
       _loadImages();
     } catch (e) {
       debugPrint("HATA OLUŞTU: $e");
     }
   }
 
-  // Tıklanınca açılacak DEDEKTİF DİALOG PENCERESİ
+  // YENİ EKLENEN: Klasörün içini canlı olarak listeleyen fonksiyon
+  Future<void> _showDirectoryContents() async {
+    final appDir = await getApplicationDocumentsDirectory();
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            // Klasördeki dosyaları anlık olarak oku
+            final List<FileSystemEntity> files = appDir.listSync();
+
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.8,
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        "Klasör İçeriği (${files.length} Öğe)",
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.refresh),
+                        onPressed: () {
+                          // Yenile butonuna basınca modalı günceller
+                          setModalState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                  Text(
+                    appDir.path,
+                    style: const TextStyle(fontSize: 10, color: Colors.grey),
+                  ),
+                  const Divider(),
+                  Expanded(
+                    child: files.isEmpty
+                        ? const Center(child: Text("Klasör tamamen boş."))
+                        : ListView.builder(
+                            itemCount: files.length,
+                            itemBuilder: (context, index) {
+                              final file = files[index];
+                              final isFile = file is File;
+                              final size = isFile ? file.lengthSync() : 0;
+                              final name = p.basename(file.path);
+                              final lastMod = isFile
+                                  ? file.lastModifiedSync()
+                                  : null;
+
+                              return ListTile(
+                                leading: Icon(
+                                  isFile ? Icons.image : Icons.folder,
+                                  color: isFile ? Colors.indigo : Colors.orange,
+                                ),
+                                title: Text(
+                                  name,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  isFile
+                                      ? "${(size / 1024).toStringAsFixed(2)} KB\n${lastMod?.day}/${lastMod?.month}/${lastMod?.year} ${lastMod?.hour}:${lastMod?.minute}"
+                                      : "Klasör",
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                                isThreeLine: isFile,
+                                trailing: IconButton(
+                                  icon: const Icon(
+                                    Icons.delete_outline,
+                                    color: Colors.red,
+                                  ),
+                                  onPressed: () {
+                                    // Test amaçlı dosyayı fiziksel olarak sil
+                                    if (isFile) {
+                                      file.deleteSync();
+                                      setModalState(() {}); // Modalı yenile
+                                      _loadImages(); // Ana ekranı yenile
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            "$name silindi!",
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                    }
+                                  },
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _showDiagnosticLog(TestImageModel item) async {
     final appDir = await getApplicationDocumentsDirectory();
     final file = File(item.currentFixedPath);
     final bool exists = file.existsSync();
     final int size = exists ? file.lengthSync() : 0;
 
-    // Klasör değişimi var mı analizi
     final dbDir = item.dbSavedPath.substring(
       0,
       item.dbSavedPath.lastIndexOf('/'),
@@ -195,7 +309,7 @@ class _TestHomePageState extends State<TestHomePage> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              Text("Boyut: $size byte"),
+              Text("Boyut: ${(size / 1024).toStringAsFixed(2)} KB"),
               const Divider(),
               Text(
                 "Sandbox (Klasör) Durumu:",
@@ -246,6 +360,11 @@ class _TestHomePageState extends State<TestHomePage> {
         title: const Text('TestFlight İzole Test'),
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadImages),
+          // YENİ BUTON BURADA: KLASÖR İÇERİĞİNİ GÖR
+          IconButton(
+            icon: const Icon(Icons.folder_open),
+            onPressed: _showDirectoryContents,
+          ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
